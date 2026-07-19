@@ -19,6 +19,26 @@ from admin_app.services.api_client import AdminAPIClient
 logger = logging.getLogger(__name__)
 
 
+def set_window_icon(window):
+    """Set window title bar icon from assets/icon.ico, compatible with PyInstaller bundle."""
+    import sys
+    import os
+    try:
+        base_path = sys._MEIPASS
+    except AttributeError:
+        base_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    
+    icon_path = os.path.join(base_path, "assets", "icon.ico")
+    if not os.path.exists(icon_path):
+        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "assets", "icon.ico")
+        
+    if os.path.exists(icon_path):
+        try:
+            window.iconbitmap(icon_path)
+        except Exception as e:
+            logger.warning(f"Could not set window icon: {e}")
+
+
 class AdminApp(ctk.CTk):
     """Main admin application with sidebar navigation."""
 
@@ -28,6 +48,7 @@ class AdminApp(ctk.CTk):
         self.title(f"{APP_NAME} — {COMPANY_NAME}")
         self.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
         self.minsize(960, 600)
+        set_window_icon(self)
 
         # Center on screen
         self.update_idletasks()

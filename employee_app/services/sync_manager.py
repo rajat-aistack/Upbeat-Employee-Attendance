@@ -57,6 +57,13 @@ class SyncManager:
     def _run(self):
         """Background thread main loop."""
         while not self._stop_event.is_set():
+            # Send keep-alive ping to Render server
+            try:
+                logger.info("Sending keep-alive ping to API server...")
+                self.api_client.check_health()
+            except Exception as e:
+                logger.warning(f"Keep-alive ping failed: {e}")
+
             try:
                 self._do_sync()
             except Exception as e:

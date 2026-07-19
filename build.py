@@ -33,7 +33,20 @@ def main():
     for folder in ["build", "dist"]:
         if os.path.exists(folder):
             print(f"Cleaning existing {folder} folder...")
-            shutil.rmtree(folder)
+            try:
+                shutil.rmtree(folder)
+            except Exception as e:
+                print(f"Warning: Could not remove {folder}: {e}")
+                print("Continuing anyway...")
+
+    # Clean up any spec files
+    for file in os.listdir("."):
+        if file.endswith(".spec"):
+            try:
+                os.remove(file)
+                print(f"Removed spec file: {file}")
+            except Exception as e:
+                print(f"Warning: Could not remove spec file {file}: {e}")
 
     # 3. Build Employee Attendance Application
     print("\n==========================================")
@@ -48,6 +61,8 @@ def main():
         "--noconsole",
         "--name=Upbeat_Attendance",
         f"--add-data={ctk_dir}{os.pathsep}customtkinter",
+        f"--add-data=assets/icon.ico{os.pathsep}assets",
+        "--icon=assets/icon.ico",
         "employee_app/main.py"
     ]
     
@@ -66,6 +81,8 @@ def main():
         "--noconsole",
         "--name=Upbeat_Admin",
         f"--add-data={ctk_dir}{os.pathsep}customtkinter",
+        f"--add-data=assets/icon.ico{os.pathsep}assets",
+        "--icon=assets/icon.ico",
         "admin_app/main.py"
     ]
     

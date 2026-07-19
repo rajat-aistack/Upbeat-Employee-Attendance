@@ -1,4 +1,4 @@
 {
-    "API_BASE_URL": "http://127.0.0.1:8000",
-    "API_KEY": "upbeat-attendance-api-key-2024-secure"
+    "API_BASE_URL": "https://upbeat-attendance-api.onrender.com",
+    "API_KEY": "upbeat-attendance-prod-api-key"
 }

@@ -22,6 +22,26 @@ from employee_app.services.sync_manager import SyncManager
 logger = logging.getLogger(__name__)
 
 
+def set_window_icon(window):
+    """Set window title bar icon from assets/icon.ico, compatible with PyInstaller bundle."""
+    import sys
+    import os
+    try:
+        base_path = sys._MEIPASS
+    except AttributeError:
+        base_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    
+    icon_path = os.path.join(base_path, "assets", "icon.ico")
+    if not os.path.exists(icon_path):
+        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "assets", "icon.ico")
+        
+    if os.path.exists(icon_path):
+        try:
+            window.iconbitmap(icon_path)
+        except Exception as e:
+            logger.warning(f"Could not set window icon: {e}")
+
+
 class AttendanceApp(ctk.CTk):
     """Main application window."""
 
@@ -33,6 +53,11 @@ class AttendanceApp(ctk.CTk):
         self.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
         self.minsize(460, 600)
         self.resizable(True, True)
+        set_window_icon(self)
+
+        # System Tray setup
+        self.tray_icon = None
+        self._init_tray()
 
         # Center window on screen
         self.update_idletasks()
@@ -130,6 +155,17 @@ class AttendanceApp(ctk.CTk):
                     # Device is registered and employee is active
                     self.employee_name = device_info.get("employee_name", "Employee")
                     self.employee_db_id = device_info.get("employee_db_id")
+                    
+                    # Cache registration details locally for offline bypass
+                    try:
+                        import json
+                        from employee_app.config import CONFIG_FILE
+                        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+                            json.dump(device_info, f, indent=4)
+                        logger.info("Saved registration details to local cache")
+                    except Exception as cache_err:
+                        logger.warning(f"Could not cache registration details: {cache_err}")
+                        
                     self.after(0, self._show_attendance_view)
                 else:
                     # Not registered — request registration
@@ -141,7 +177,27 @@ class AttendanceApp(ctk.CTk):
 
             except Exception as e:
                 logger.error(f"Connection error: {e}")
-                # Show offline message
+                
+                # Attempt to bypass using local cache if offline
+                try:
+                    import json
+                    from employee_app.config import CONFIG_FILE
+                    if CONFIG_FILE.exists():
+                        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                            cached_info = json.load(f)
+                        if cached_info.get("registered") and cached_info.get("employee_status") == "active":
+                            self.employee_name = cached_info.get("employee_name", "Employee")
+                            self.employee_db_id = cached_info.get("employee_db_id")
+                            logger.info("Proceeding in Offline Mode using cached registration details")
+                            self.after(0, self._show_attendance_view)
+                            self.after(1000, lambda: show_toast(
+                                self, "Offline Mode: Punch In will be saved locally", "warning"
+                            ))
+                            return
+                except Exception as cache_err:
+                    logger.warning(f"Could not load local registration cache: {cache_err}")
+                
+                # Show offline message if cache is missing or invalid
                 self.after(0, lambda: self._show_error(
                     "Cannot connect to server",
                     "Please check your internet connection and try again.",
@@ -407,22 +463,11 @@ class AttendanceApp(ctk.CTk):
             except APIError as e:
                 self.after(0, lambda: self._on_punch_out_failed(e.detail))
             except Exception as e:
-                logger.warning(f"Punch out failed (saving offline): {e}")
-                self.offline_store.store_record(
-                    action="punch_out",
-                    device_fingerprint=self.fingerprint,
-                    hostname=payload["hostname"],
-                    system_username=payload["system_username"],
-                    ip_address=payload["ip_address"],
-                    mac_address=payload["mac_address"],
-                    wifi_ssid=payload["wifi_ssid"],
-                    wifi_bssid=payload["wifi_bssid"],
-                    gateway_mac=payload["gateway_mac"],
-                    gateway_ip=payload["gateway_ip"],
-                    timestamp=now,
-                )
-                time_str = now.strftime("%I:%M %p")
-                self.after(0, lambda: self._on_punch_out_offline(time_str, "Saved offline — connection failed"))
+                logger.error(f"Punch out failed: {e}")
+                # Re-enable the button and display the error message since online check is mandatory
+                self.after(0, lambda: self._on_punch_out_failed(
+                    "Punch out failed: API connection is required. Please check your network connectivity."
+                ))
 
         threading.Thread(target=_action, daemon=True).start()
 
@@ -489,6 +534,63 @@ class AttendanceApp(ctk.CTk):
             self.current_view.set_sync_status(count)
 
     def on_closing(self):
-        """Clean up on window close."""
+        """Minimize to tray instead of closing."""
+        if self.tray_icon:
+            self.withdraw()
+            try:
+                self.tray_icon.notify("App is minimized to system tray. Double-click or right-click to restore.", "Upbeat Attendance")
+            except Exception:
+                pass
+        else:
+            self.on_closing_actual()
+
+    def on_closing_actual(self):
+        """Clean up and close the application."""
+        if self.tray_icon:
+            try:
+                self.tray_icon.stop()
+            except Exception:
+                pass
         self.sync_manager.stop()
         self.destroy()
+
+    def _init_tray(self):
+        """Initialize the system tray icon."""
+        import sys
+        import os
+        try:
+            import pystray
+            from PIL import Image
+            
+            # Find icon path
+            try:
+                base_path = sys._MEIPASS
+            except AttributeError:
+                base_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            icon_path = os.path.join(base_path, "assets", "icon.ico")
+            if not os.path.exists(icon_path):
+                icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "assets", "icon.ico")
+                
+            if os.path.exists(icon_path):
+                image = Image.open(icon_path)
+            else:
+                image = Image.new("RGB", (64, 64), color="blue")
+                
+            menu = pystray.Menu(
+                pystray.MenuItem("Show App", self.show_window, default=True),
+                pystray.MenuItem("Exit", self.exit_app)
+            )
+            self.tray_icon = pystray.Icon("upbeat_attendance", image, "Upbeat Attendance", menu, action=self.show_window)
+            self.tray_icon.run_detached()
+            
+        except Exception as e:
+            logger.warning(f"Could not initialize system tray: {e}")
+
+    def show_window(self, icon=None, item=None):
+        """Restore the window from system tray."""
+        self.after(0, self.deiconify)
+        self.after(0, self.focus_force)
+
+    def exit_app(self, icon=None, item=None):
+        """Exit the application completely from tray."""
+        self.after(0, self.on_closing_actual)

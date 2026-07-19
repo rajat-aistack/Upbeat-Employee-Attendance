@@ -176,12 +176,30 @@ def validate_office_network(
     if not required_bssid and not required_gateway_mac and not required_ssid:
         return True, "Office network not configured — allowing all connections"
     
+    # Check if we are on a wired LAN interface matching office configuration
+    is_wired_lan = bool(network_info.ip_address and not network_info.wifi_bssid)
+    
+    # Gateway MAC check variables
+    matches_mac = False
+    if required_gateway_mac and network_info.gateway_mac:
+        matches_mac = (network_info.gateway_mac.lower() == required_gateway_mac.lower())
+        
+    # Gateway IP check variables
+    matches_ip = False
+    if required_gateway_ip and network_info.gateway_ip:
+        matches_ip = (network_info.gateway_ip == required_gateway_ip)
+        
+    on_office_lan = is_wired_lan and (matches_mac or matches_ip)
+    
     validation_passed = True
     failures = []
     
     # Primary: BSSID check (most reliable)
     if required_bssid:
-        if not network_info.wifi_bssid:
+        if on_office_lan:
+            # Bypass WiFi BSSID check since they are verified on the office LAN
+            pass
+        elif not network_info.wifi_bssid:
             failures.append("WiFi not connected (required for office verification)")
             validation_passed = False
         elif network_info.wifi_bssid.lower() != required_bssid.lower():
@@ -189,27 +207,29 @@ def validate_office_network(
             validation_passed = False
     
     # Primary: Gateway MAC check
-    if required_gateway_mac:
+    if required_gateway_mac and not on_office_lan:
         if not network_info.gateway_mac:
             failures.append("Cannot determine gateway")
             validation_passed = False
-        elif network_info.gateway_mac.lower() != required_gateway_mac.lower():
+        elif not matches_mac:
             failures.append("Gateway does not match office network")
             validation_passed = False
     
     # Secondary: SSID check
-    if required_ssid and validation_passed:
+    if required_ssid and validation_passed and not on_office_lan:
         if network_info.wifi_ssid and network_info.wifi_ssid != required_ssid:
             failures.append("WiFi network name does not match")
             validation_passed = False
     
     # Secondary: Gateway IP check
-    if required_gateway_ip and validation_passed:
-        if network_info.gateway_ip and network_info.gateway_ip != required_gateway_ip:
+    if required_gateway_ip and validation_passed and not on_office_lan:
+        if network_info.gateway_ip and not matches_ip:
             failures.append("Gateway IP does not match office network")
             validation_passed = False
     
     if validation_passed:
+        if on_office_lan:
+            return True, "Connected to authorized office network (LAN)"
         return True, "Connected to authorized office network"
     else:
         return False, "; ".join(failures)
